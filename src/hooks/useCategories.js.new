@@ -1,0 +1,127 @@
+// filepath: c:\Users\b.mvouama\Downloads\siteweb\voisin-solidaire\src\hooks\useCategories.js
+import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
+
+// Catégories par défaut à utiliser en cas d'échec de chargement
+const DEFAULT_CATEGORIES = [
+  { id: 1, name: 'Aide aux courses', icon: '🛒', color: 'bg-vs-blue-primary text-white', active: true },
+  { id: 2, name: 'Transport', icon: '🚗', color: 'bg-vs-green-secondary text-white', active: true },
+  { id: 3, name: 'Compagnie', icon: '👋', color: 'bg-vs-orange-accent text-white', active: true },
+  { id: 4, name: 'Bricolage', icon: '🔨', color: 'bg-purple-500 text-white', active: true },
+  { id: 5, name: 'Jardinage', icon: '🌱', color: 'bg-green-600 text-white', active: true },
+  { id: 6, name: 'Informatique', icon: '💻', color: 'bg-blue-600 text-white', active: true },
+  { id: 7, name: 'Autre', icon: '📋', color: 'bg-gray-600 text-white', active: true }
+];
+
+export const useCategories = () => {
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        setLoading(true);
+        
+        // Vérifier la connexion réseau avant de faire l'appel
+        if (!navigator.onLine) {
+          throw new Error("Pas de connexion Internet. Veuillez vérifier votre connexion réseau.");
+        }
+        
+        // Vérifier d'abord la connexion à Supabase
+        const { checkSupabaseConnection } = await import('../lib/supabase');
+        const connectionStatus = await checkSupabaseConnection('categories');
+        
+        if (!connectionStatus.connected) {
+          throw new Error(`Impossible de se connecter à Supabase: ${connectionStatus.error || 'Erreur inconnue'}`);
+        }
+        
+        if (!connectionStatus.tableExists) {
+          throw new Error("La table 'categories' n'existe pas dans la base de données Supabase.");
+        }
+        
+        // Ajouter un timeout pour éviter les attentes infinies
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("Délai d'attente dépassé lors du chargement des catégories")), 15000);
+        });
+        
+        // Race entre la requête et le timeout
+        const fetchPromise = supabase
+          .from('categories')
+          .select('*')
+          .eq('active', true)
+          .order('name');
+          
+        // Utilisation de Promise.race de manière correcte
+        let result;
+        try {
+          result = await Promise.race([
+            fetchPromise,
+            timeoutPromise
+          ]);
+        } catch (timeoutError) {
+          throw timeoutError; // Propager l'erreur de timeout
+        }
+        
+        const { data, error } = result;
+
+        if (error) throw error;
+        
+        const loadedCategories = data || [];
+        setCategories(loadedCategories);
+        
+        // Mettre en cache les catégories chargées
+        if (loadedCategories.length > 0) {
+          try {
+            localStorage.setItem('cachedCategories', JSON.stringify(loadedCategories));
+          } catch (e) {
+            console.error('Erreur lors de la mise en cache des catégories:', e);
+          }
+        }
+      } catch (err) {
+        console.error('Erreur lors du chargement des catégories:', err);
+        
+        // Amélioration du message d'erreur
+        if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+          setError("Impossible de se connecter au serveur. Veuillez vérifier votre connexion Internet.");
+        } else if (err.message.includes("n'existe pas")) {
+          setError("La table des catégories n'existe pas encore. Utilisation des catégories par défaut.");
+          // Utiliser les catégories par défaut si la table n'existe pas
+          setCategories(DEFAULT_CATEGORIES);
+          try {
+            localStorage.setItem('cachedCategories', JSON.stringify(DEFAULT_CATEGORIES));
+          } catch (e) {
+            console.error('Erreur lors de la mise en cache des catégories par défaut:', e);
+          }
+        } else {
+          setError(err.message || "Une erreur s'est produite lors du chargement des catégories");
+        }
+        
+        // Utiliser des données en cache si disponibles
+        const cachedCategories = localStorage.getItem('cachedCategories');
+        if (cachedCategories) {
+          try {
+            setCategories(JSON.parse(cachedCategories));
+            console.log('Utilisation des catégories en cache');
+          } catch (e) {
+            console.error('Erreur lors de la lecture du cache:', e);
+            // Utiliser les catégories par défaut en dernier recours
+            setCategories(DEFAULT_CATEGORIES);
+          }
+        } else {
+          // Aucune donnée en cache, utiliser les catégories par défaut
+          setCategories(DEFAULT_CATEGORIES);
+          console.log('Utilisation des catégories par défaut');
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCategories();
+  }, []);
+
+  return { categories, loading, error };
+};
+
+export default useCategories;
